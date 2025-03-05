@@ -6,6 +6,7 @@ use serde::Deserialize;
 #[derive(Debug, Deserialize)]
 struct Config {
     primary_db: DbConfig,
+    secondary_db: DbConfig,
 }
 
 #[derive(Debug, Deserialize)]
@@ -17,7 +18,7 @@ struct DbConfig {
     schema: String,
 }
 
-fn create_connection_one(db_config: DbConfig) -> Result<Pool, mysql::Error> {
+fn create_connection(db_config: DbConfig) -> Result<Pool, mysql::Error> {
     let opts = OptsBuilder::new()
         .user(Some(db_config.user))
         .pass(Some(db_config.password))
@@ -27,9 +28,9 @@ fn create_connection_one(db_config: DbConfig) -> Result<Pool, mysql::Error> {
     Pool::new(opts)
 }
 
-fn get_primary_db_tables(db_config: DbConfig) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+fn get_db_tables(db_config: DbConfig) -> Result<Vec<String>, Box<dyn std::error::Error>> {
     let schema = db_config.schema.clone();
-    let conn_one = create_connection_one(db_config)?;
+    let conn_one = create_connection(db_config)?;
 
     let mut tx1 = conn_one.get_conn()?;
 
@@ -47,9 +48,9 @@ fn get_primary_db_tables(db_config: DbConfig) -> Result<Vec<String>, Box<dyn std
 
 fn main() {
     let config_str = fs::read_to_string("config.toml").expect("Cannot find the file");
-    let db_one_config: Config = toml::from_str(&config_str).expect("No config.toml");
+    let db_config: Config = toml::from_str(&config_str).expect("No config.toml");
 
-    let primary_db_tables = match get_primary_db_tables(db_one_config.primary_db) {
+    let primary_db_tables = match get_db_tables(db_config.primary_db) {
         Ok(tables) => tables,
         Err(err) => {
             eprint!("{}", err);
@@ -57,7 +58,19 @@ fn main() {
         }
     };
 
+    let secondary_db_tables = match get_db_tables(db_config.secondary_db) {
+        Ok(tables) => tables,
+        Err(err) => {
+            eprintln!("{}", err);
+            panic!("Something went wrong with secondary DB")
+        }
+    };
+
     for table in primary_db_tables.iter() {
+        println!("{}", table)
+    }
+
+    for table in secondary_db_tables.iter() {
         println!("{}", table)
     }
     println!("Hello, world!");
