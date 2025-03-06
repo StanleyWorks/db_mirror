@@ -3,7 +3,7 @@
 
 ### Please note 
 This tool is still under heavy development and I cannot guarantee stability.
-I also have a Node.js version [Here](https://github.com/StanleyWorks/db_mirror_node);
+I also have a Node.js version [here](https://github.com/StanleyWorks/db_mirror_node)
 
 ### Setup 
 This tool is configures with a TOML file. 
