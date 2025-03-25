@@ -1,7 +1,7 @@
-use std::{error::Error, fs};
+use std::{error::Error, fs, time::Instant};
 
-use mysql::{params, prelude::Queryable, OptsBuilder, Pool, Row};
 use serde::Deserialize;
+use sqlx::{query, MySql, MySqlPool, Pool, Row};
 
 #[derive(Debug, Deserialize)]
 struct Config {
@@ -18,94 +18,143 @@ struct DbConfig {
     schema: String,
 }
 
-fn create_connection(db_config: &DbConfig) -> Result<Pool, mysql::Error> {
-    let opts = OptsBuilder::new()
-        .user(Some(db_config.user.clone()))
-        .pass(Some(db_config.password.clone()))
-        .ip_or_hostname(Some(db_config.host.clone()))
-        .tcp_port(db_config.port);
+async fn create_connection(db_config: &DbConfig) -> Result<Pool<MySql>, Box<dyn Error>> {
+    let connection_string = format!(
+        "mysql://{}:{}@{}:{}/{}",
+        db_config.user, db_config.password, db_config.host, db_config.port, db_config.schema
+    );
+    let pool = MySqlPool::connect(&connection_string)
+        .await
+        .map_err(|err| format!("Database connections error {:?}", err))?;
 
-    Pool::new(opts)
+    Ok(pool)
 }
 
-fn get_db_tables(db_config: &DbConfig) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+/// Get all Databse tables
+async fn get_db_tables(db_config: &DbConfig) -> Result<Vec<String>, Box<dyn std::error::Error>> {
     let schema = db_config.schema.clone();
 
     println!("Connecting to primary DB on: {}", db_config.host);
-    let conn_one = create_connection(db_config)?;
-
-    let mut tx1 = conn_one.get_conn()?;
+    let conn_one = create_connection(db_config).await?;
 
     println!("Connected to primary DB");
 
-    let stmt = tx1.prep(
-        "SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = :primary_schema AND TABLE_TYPE = :table_type",
-    )?;
+    let all_tables = query("SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = ?")
+        .bind(schema)
+        .bind("BASE TABLE")
+        .fetch_all(&conn_one).await?;
 
-    println!("Fetching tables");
+    println!("Fetched all tables");
+    let table_names: Vec<String> = all_tables
+        .iter()
+        .map(|row| {
+            let raw_bytes: Vec<u8> = row.get("TABLE_NAME");
+            String::from_utf8(raw_bytes).expect("Invalid UTF-8 in table name")
+        })
+        .collect();
 
-    let all_tables = tx1.exec(
-        &stmt,
-        params! {"primary_schema" => schema, "table_type" => "BASE TABLE"},
-    )?;
-
-    Ok(all_tables)
+    Ok(table_names)
 }
 
-fn copy_tables() -> Result<(), Box<dyn Error>> {
+async fn copy_tables() -> Result<(), Box<dyn Error>> {
     let config_str = fs::read_to_string("config.toml")?;
     let db_config: Config = toml::from_str(&config_str)?;
 
-    let primary_db_tables = get_db_tables(&db_config.primary_db)?;
+    let primary_db_tables = get_db_tables(&db_config.primary_db).await?;
 
     let primary_db = db_config.primary_db;
     let secondary_db = db_config.secondary_db;
-    let secondary_schema = secondary_db.schema.clone();
-    let secondary_db_connection = create_connection(&secondary_db)?;
-    let primary_db_connection = create_connection(&primary_db)?;
-    let mut pri_con = primary_db_connection.get_conn()?;
-    let mut sec_con = secondary_db_connection.get_conn()?;
-    let _: Vec<String> = sec_con.query("SET FOREIGN_KEY_CHECKS = 0")?;
-
-    let _ = pri_con.query::<String, String>(format!("USE {}", primary_db.schema));
+    let secondary_db_connection = create_connection(&secondary_db).await?;
+    let primary_db_connection = create_connection(&primary_db).await?;
 
     for table in primary_db_tables.iter() {
         println!("Checking if table {} exists in secondary", table);
-        let query = "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?";
-        let count: Option<u64> = sec_con.exec_first(query, (secondary_schema.clone(), table))?; // The clone here 😬
+        let count = query("SELECT COUNT(*) AS count FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?")
+            .bind(&secondary_db.schema)
+            .bind(table)
+            .fetch_one(&secondary_db_connection).await?;
 
-        if count.unwrap() != 0 {
+        if count.get::<i32, _>("count") != 0 {
             println!("Truncating {}", table);
-            sec_con.query::<String, String>(format!(
-                "TRUNCATE TABLE {}.{}",
-                secondary_db.schema, table
-            ))?;
+            query("SET FOREIGN_KEY_CHECKS = 0")
+                .execute(&secondary_db_connection)
+                .await
+                .map_err(|_| "Failed to set FOREIGN_KEY_CHECKS to 0")?;
 
-            println!("Mirroring data");
-            let rows: Vec<Row> = pri_con.query(format!("SELECT * FROM {}", table))?;
+            query(&format!(
+                "TRUNCATE TABLE {}.{}",
+                &secondary_db.schema, table
+            ))
+            .execute(&secondary_db_connection)
+            .await
+            .map_err(|e| format!("Failed to truncate {:?}", e))?;
+
+            println!("Mirroring the {} table", table);
+            let rows = query(&format!("SELECT * FROM `{}`", table))
+                .fetch_all(&primary_db_connection)
+                .await
+                .map_err(|e| format!("Failed to fetch data from primary DB: {:?}", e))?;
 
             if !rows.is_empty() {
-                let num_columns = rows[0].columns().len();
-                let placeholders = vec!["?"; num_columns].join(", ");
-                let insert_query = format!("INSERT INTO `{}` VALUES ({})", table, placeholders);
+                let column_query = format!(
+        "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '{}'",
+        table
+    );
 
-                let mut values = Vec::new();
-                for row in rows {
-                    values.push(row.unwrap());
+                let columns: Vec<String> = sqlx::query(&column_query)
+                    .fetch_all(&secondary_db_connection)
+                    .await?
+                    .into_iter()
+                    .map(|row| row.get::<String, _>("COLUMN_NAME"))
+                    .collect();
+
+                if columns.is_empty() {
+                    return Err(format!("No columns found for table {}", table).into());
                 }
 
-                let _ = sec_con.exec_batch(insert_query, values);
+                let num_columns = columns.len();
+                let placeholders = vec!["?"; num_columns].join(", ");
+
+                let insert_query = format!(
+                    "INSERT INTO `{}` ({}) VALUES ({})",
+                    table,
+                    columns.join(", "), // Explicit column names
+                    placeholders
+                );
+
+                println!("Executing: {}", insert_query);
+
+                let mut transaction = secondary_db_connection.begin().await?;
+
+                for row in rows {
+                    let mut query_builder = sqlx::query(&insert_query);
+                    for col in &columns {
+                        let value: Option<String> = row.try_get(col.as_str()).ok();
+                        query_builder = query_builder.bind(value);
+                    }
+                    let _ = query_builder.execute(&mut *transaction).await;
+                }
+
+                let _ = transaction.commit().await;
             }
         }
     }
 
-    let _: Vec<String> = sec_con.query("SET FOREIGN_KEY_CHECKS = 1")?;
+    query("SET FOREIGN_KEY_CHECKS = 1")
+        .execute(&secondary_db_connection)
+        .await?;
     Ok(())
 }
 
-fn main() {
-    match copy_tables() {
-        Ok(_) => println!("Database mirror complete."),
-        Err(err) => eprintln!("Error {}", err),
+#[tokio::main]
+async fn main() {
+    let start_time = Instant::now();
+
+    match copy_tables().await {
+        Ok(_) => {
+            let elapsed = start_time.elapsed();
+            println!("Database mirror completed in {:.2?}", elapsed)
+        }
+        Err(err) => eprintln!("{}", err),
     };
 }

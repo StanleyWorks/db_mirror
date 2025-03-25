@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-mysql = "26.0.0"
 serde = "1.0.218"
+sqlx = { version = "0.8.3", features = ["runtime-tokio-native-tls", "sqlx-mysql", "mysql"] }
+tokio = { version = "1.44.1", features = ["full"] }
 toml = "0.8.20"
