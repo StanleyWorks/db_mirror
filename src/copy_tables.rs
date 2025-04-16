@@ -1,3 +1,4 @@
+use log::info;
 use sqlx::Row;
 use std::{error::Error, fs};
 
@@ -18,14 +19,14 @@ pub async fn copy_tables() -> Result<(), Box<dyn Error>> {
     let primary_db_connection = create_connection(&primary_db).await?;
 
     for table in primary_db_tables.iter() {
-        println!("Checking if table {} exists in secondary", table);
+        info!("Checking if table {} exists in secondary", table);
         let count = query("SELECT COUNT(*) AS count FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?")
             .bind(&secondary_db.schema)
             .bind(table)
             .fetch_one(&secondary_db_connection).await?;
 
         if count.get::<i32, _>("count") != 0 {
-            println!("Truncating {}", table);
+            info!("Truncating {}", table);
             query("SET FOREIGN_KEY_CHECKS = 0")
                 .execute(&secondary_db_connection)
                 .await
@@ -39,7 +40,7 @@ pub async fn copy_tables() -> Result<(), Box<dyn Error>> {
             .await
             .map_err(|e| format!("Failed to truncate {:?}", e))?;
 
-            println!("Mirroring the {} table", table);
+            info!("Mirroring the {} table", table);
             let rows = query(&format!("SELECT * FROM `{}`", table))
                 .fetch_all(&primary_db_connection)
                 .await
@@ -72,7 +73,7 @@ pub async fn copy_tables() -> Result<(), Box<dyn Error>> {
                     placeholders
                 );
 
-                println!("Executing: {}", insert_query);
+                info!("Executing: {}", insert_query);
 
                 let mut transaction = secondary_db_connection.begin().await?;
 

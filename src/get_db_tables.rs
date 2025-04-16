@@ -1,3 +1,4 @@
+use log::info;
 use sqlx::query;
 use sqlx::Row;
 
@@ -10,17 +11,17 @@ pub async fn get_db_tables(
 ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
     let schema = db_config.schema.clone();
 
-    println!("Connecting to primary DB on: {:?}", db_config);
+    info!("Connecting to primary DB on: {:?}", db_config);
     let conn_one = create_connection(db_config).await?;
 
-    println!("Connected to primary DB");
+    info!("Connected to primary DB");
 
     let all_tables = query("SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = ?")
         .bind(schema)
         .bind("BASE TABLE")
         .fetch_all(&conn_one).await?;
 
-    println!("Fetched all tables");
+    info!("Fetched all tables");
     let table_names: Vec<String> = all_tables
         .iter()
         .map(|row| {
