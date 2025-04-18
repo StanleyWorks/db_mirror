@@ -32,31 +32,22 @@ schema = ""
 This tool uses env_logger for log output.
 
 You can control verbosity using the RUST_LOG environment variable:
-	•	Default (no env var): shows info, warn, error
 
-1. Show only warnings and errors:
+- Default (no env var): shows info, warn, error
+- Show only warnings and errors:
 ```shell
 RUST_LOG=warn cargo run
 ```
-
-
-2. Silence all logs:
+- Silence all logs:
 ```shell
 RUST_LOG=off cargo run
 ```
-
-
-3. Show debug logs (if used):
+- Show debug logs (if used):
 ```shell
 RUST_LOG=debug cargo run
 ```
-
-
-
-4. Log output format:
-
+- Log output format:
 ```log
 [2025-04-16 22:25:41]: App started
 ````
-
 ### More docs coming soon.
