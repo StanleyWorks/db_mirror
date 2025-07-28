@@ -1,6 +1,6 @@
 use log::info;
-use sqlx::query;
 use sqlx::Row;
+use sqlx::query;
 
 use crate::{config::DbConfig, create_connection::create_connection};
 
@@ -11,7 +11,7 @@ pub async fn get_db_tables(
 ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
     let schema = db_config.schema.clone();
 
-    info!("Connecting to primary DB on: {:?}", db_config);
+    info!("Connecting to primary DB on: {db_config:?}");
     let conn_one = create_connection(db_config).await?;
 
     info!("Connected to primary DB");

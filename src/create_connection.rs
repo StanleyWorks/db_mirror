@@ -13,7 +13,7 @@ pub async fn create_connection(db_config: &DbConfig) -> Result<Pool<MySql>, Box<
     );
     let pool = MySqlPool::connect(&connection_string)
         .await
-        .map_err(|err| format!("Database connections error {:?}", err))?;
+        .map_err(|err| format!("Database connections error {err:?}"))?;
 
     Ok(pool)
 }

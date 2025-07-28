@@ -38,8 +38,8 @@ async fn async_main() {
     match copy_tables().await {
         Ok(_) => {
             let elapsed = start_time.elapsed();
-            info!("Database mirror completed in {:.2?}", elapsed)
+            info!("Database mirror completed in {elapsed:.2?}")
         }
-        Err(err) => warn!("{}", err),
+        Err(err) => warn!("{err}"),
     };
 }

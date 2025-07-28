@@ -19,14 +19,14 @@ pub async fn copy_tables() -> Result<(), Box<dyn Error>> {
     let primary_db_connection = create_connection(&primary_db).await?;
 
     for table in primary_db_tables.iter() {
-        info!("Checking if table {} exists in secondary", table);
+        info!("Checking if table {table} exists in secondary");
         let count = query("SELECT COUNT(*) AS count FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?")
             .bind(&secondary_db.schema)
             .bind(table)
             .fetch_one(&secondary_db_connection).await?;
 
         if count.get::<i32, _>("count") != 0 {
-            info!("Truncating {}", table);
+            info!("Truncating {table}");
             query("SET FOREIGN_KEY_CHECKS = 0")
                 .execute(&secondary_db_connection)
                 .await
@@ -38,18 +38,17 @@ pub async fn copy_tables() -> Result<(), Box<dyn Error>> {
             ))
             .execute(&secondary_db_connection)
             .await
-            .map_err(|e| format!("Failed to truncate {:?}", e))?;
+            .map_err(|e| format!("Failed to truncate {e:?}"))?;
 
-            info!("Mirroring the {} table", table);
-            let rows = query(&format!("SELECT * FROM `{}`", table))
+            info!("Mirroring the {table} table");
+            let rows = query(&format!("SELECT * FROM `{table}`"))
                 .fetch_all(&primary_db_connection)
                 .await
-                .map_err(|e| format!("Failed to fetch data from primary DB: {:?}", e))?;
+                .map_err(|e| format!("Failed to fetch data from primary DB: {e:?}"))?;
 
             if !rows.is_empty() {
                 let column_query = format!(
-                    "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '{}'",
-                    table
+                    "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '{table}'"
                 );
 
                 let columns: Vec<String> = sqlx::query(&column_query)
@@ -60,7 +59,7 @@ pub async fn copy_tables() -> Result<(), Box<dyn Error>> {
                     .collect();
 
                 if columns.is_empty() {
-                    return Err(format!("No columns found for table {}", table).into());
+                    return Err(format!("No columns found for table {table}").into());
                 }
 
                 let num_columns = columns.len();
@@ -73,7 +72,7 @@ pub async fn copy_tables() -> Result<(), Box<dyn Error>> {
                     placeholders
                 );
 
-                info!("Executing: {}", insert_query);
+                info!("Executing: {insert_query}");
 
                 let mut transaction = secondary_db_connection.begin().await?;
 
