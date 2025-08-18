@@ -1,15 +1,21 @@
-use log::info;
-use sqlx::Row;
-use std::{error::Error, fs};
+use log::{debug, info, warn};
+use sqlx::{Error, Row};
+use std::{fs, process};
 
 use sqlx::query;
 
 use crate::{config::Config, create_connection::create_connection, get_db_tables::get_db_tables};
 
 /// Copy table data from the primary to secondary DB
-pub async fn copy_tables() -> Result<(), Box<dyn Error>> {
+pub async fn copy_tables() -> Result<(), Error> {
     let config_str = fs::read_to_string("config.toml")?;
-    let db_config: Config = toml::from_str(&config_str)?;
+    let db_config: Config = match toml::from_str(&config_str) {
+        Ok(cfg) => cfg,
+        Err(_) => {
+            warn!("Database config loading failed.");
+            process::exit(1)
+        }
+    };
 
     let primary_db_tables = get_db_tables(&db_config.primary_db).await?;
 
@@ -29,24 +35,23 @@ pub async fn copy_tables() -> Result<(), Box<dyn Error>> {
             info!("Truncating {table}");
             query("SET FOREIGN_KEY_CHECKS = 0")
                 .execute(&secondary_db_connection)
-                .await
-                .map_err(|_| "Failed to set FOREIGN_KEY_CHECKS to 0")?;
+                .await?;
 
             query(&format!(
                 "TRUNCATE TABLE {}.{}",
                 &secondary_db.schema, table
             ))
             .execute(&secondary_db_connection)
-            .await
-            .map_err(|e| format!("Failed to truncate {e:?}"))?;
+            .await?;
 
             info!("Mirroring the {table} table");
             let rows = query(&format!("SELECT * FROM `{table}`"))
                 .fetch_all(&primary_db_connection)
-                .await
-                .map_err(|e| format!("Failed to fetch data from primary DB: {e:?}"))?;
+                .await?;
 
             if !rows.is_empty() {
+                let total_rows = rows.len();
+                info!("Found {total_rows} rows.");
                 let column_query = format!(
                     "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '{table}'"
                 );
@@ -59,7 +64,7 @@ pub async fn copy_tables() -> Result<(), Box<dyn Error>> {
                     .collect();
 
                 if columns.is_empty() {
-                    return Err(format!("No columns found for table {table}").into());
+                    return Err(sqlx::Error::RowNotFound);
                 }
 
                 let num_columns = columns.len();
@@ -72,9 +77,10 @@ pub async fn copy_tables() -> Result<(), Box<dyn Error>> {
                     placeholders
                 );
 
-                info!("Executing: {insert_query}");
+                debug!("Executing: {insert_query}");
 
                 let mut transaction = secondary_db_connection.begin().await?;
+
 
                 for row in rows {
                     let mut query_builder = sqlx::query(&insert_query);

@@ -1,4 +1,5 @@
 use log::info;
+use sqlx::Error;
 use sqlx::Row;
 use sqlx::query;
 
@@ -8,7 +9,7 @@ use crate::{config::DbConfig, create_connection::create_connection};
 /// These will be mirrored on the secondary DB
 pub async fn get_db_tables(
     db_config: &DbConfig,
-) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+) -> Result<Vec<String>, Error> {
     let schema = db_config.schema.clone();
 
     info!("Connecting to primary DB on: {db_config:?}");
