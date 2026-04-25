@@ -7,28 +7,24 @@ use crate::{config::DbConfig, create_connection::create_connection};
 
 /// Get all tables from the primary database.
 /// These will be mirrored on the secondary DB
-pub async fn get_db_tables(
-    db_config: &DbConfig,
-) -> Result<Vec<String>, Error> {
-    let schema = db_config.schema.clone();
-
-    info!("Connecting to primary DB on: {db_config:?}");
-    let conn_one = create_connection(db_config).await?;
+pub async fn get_db_tables(db_config: &DbConfig) -> Result<Vec<String>, Error> {
+    info!(
+        "Connecting to primary DB on {}:{} schema `{}` as `{}`",
+        db_config.host, db_config.port, db_config.schema, db_config.user
+    );
+    let mut conn_one = create_connection(db_config).await?;
 
     info!("Connected to primary DB");
 
     let all_tables = query("SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = ?")
-        .bind(schema)
+        .bind(&db_config.schema)
         .bind("BASE TABLE")
-        .fetch_all(&conn_one).await?;
+        .fetch_all(&mut conn_one).await?;
 
     info!("Fetched all tables");
     let table_names: Vec<String> = all_tables
-        .iter()
-        .map(|row| {
-            let raw_bytes: Vec<u8> = row.get("TABLE_NAME");
-            String::from_utf8(raw_bytes).expect("Invalid UTF-8 in table name")
-        })
+        .into_iter()
+        .map(|row| row.get("TABLE_NAME"))
         .collect();
 
     Ok(table_names)
