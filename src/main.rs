@@ -6,7 +6,6 @@ mod get_db_tables;
 
 use copy_tables::copy_tables;
 use env_logger::{Builder, Env};
-use log::{info, warn};
 use std::time::Instant;
 
 fn main() {
